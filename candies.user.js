@@ -91,7 +91,95 @@ var scriptFunction = function(exports, undefined) {
     }
   });
 
+  var autoHeal = exports.autoHeal = extend({}, repeating, {
+    tick: function() {
+      var character = quest && quest.things[quest.getCharacterIndex()];
+      if (character && character.hp < 100 && quest.potionUseCountdown < 1) {
+        potions.heal(100);
+      }
+    }
+  });
+
+  var activateCandyConverter = function() {
+    if (!candiesConverter.activated) {
+      document.getElementById('candies_converter_checkbox').checked = true;
+      candiesConverter.checkedValueChange();
+    }
+  };
+
+  var deactivateCandyConverter = function() {
+    if (candiesConverter.activated) {
+      document.getElementById('candies_converter_checkbox').checked = false;
+      candiesConverter.checkedValueChange();
+    }
+  };
+
+  var autoBrew = function() {
+    var potionsWanted = 100 - potions.list.majorHealth.nbrOwned;
+    if (potionsWanted < 80) {
+      if (quest.getCharacterMaxHp() >= 600) {
+        activateCandyConverter();
+      }
+      startNextBrew();
+      return;
+    }
+
+    deactivateCandyConverter();
+    var numPotionsCandies = Math.floor(candies.nbrOwned / 100);
+    var numPotionsLollipops = Math.floor(lollipops.nbrOwned / 100);
+    var numPotions = Math.min(numPotionsCandies, numPotionsLollipops, potionsWanted);
+    if (numPotions < 1) {
+      startNextBrew();
+      return;
+    }
+    var amountToAdd = numPotions * 100;
+
+    var candiesToAdd = document.getElementById('cauldron_candies_quantity');
+    var lollipopsToAdd = document.getElementById('cauldron_lollipops_quantity');
+
+    var candyInterval = null;
+    var stopAddingCandy = function() {
+      if (candyInterval) {
+        clearInterval(candyInterval);
+        candyInterval = null;
+      }
+    };
+    var tryAddingCandy = function() {
+      if (candies.nbrOwned >= amountToAdd) {
+        candiesToAdd.value = amountToAdd;
+        lollipopsToAdd.value = 0;
+        cauldron.putInTheCauldron();
+        stopAddingCandy();
+      }
+    };
+
+    var startMixing = function() {
+      cauldron.setWeAreMixing(true);
+      setTimeout(function() {
+        candyInterval = setInterval(tryAddingCandy, 1000);
+        setTimeout(stopMixing, 20000);
+      }, 1000);
+    };
+    var stopMixing = function() {
+      cauldron.stopActions();
+      cauldron.putIntoBottles();
+      stopAddingCandy();
+      startNextBrew();
+    };
+
+    candiesToAdd.value = 0;
+    lollipopsToAdd.value = amountToAdd;
+    cauldron.putInTheCauldron();
+    setTimeout(startMixing, 1000);
+  };
+
+  var startNextBrew = function() {
+    setTimeout(autoBrew, 1000);
+  };
+
   autoQuest.start();
+  autoHeal.start();
+  startNextBrew();
 };
 
 var script = document.createElement('script');
