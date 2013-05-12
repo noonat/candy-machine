@@ -1,4 +1,5 @@
 // ==UserScript==
+// @name Candy Machine
 // @match http://candies.aniwey.net/*
 // ==/UserScript==
 
@@ -57,6 +58,16 @@ var scriptFunction = function(exports, undefined) {
     delay: 1000,
     intervalId: null,
 
+    setStarted: function(started) {
+      if (started) {
+        if (!this.intervalId) {
+          this.start();
+        }
+      } else {
+        this.stop();
+      }
+    },
+
     start: function() {
       var _this = this;
       this.stop();
@@ -78,11 +89,11 @@ var scriptFunction = function(exports, undefined) {
   };
 
   var autoQuest = exports.autoQuest = extend({}, repeating, {
-    eatBeforeQuesting: true,
+    eatBeforeQuesting: false,
 
     tick: function() {
       var button = document.getElementById('quest_button');
-      if (!button.disabled) {
+      if (!$('#quest_button').is(':disabled')) {
         if (this.eatBeforeQuesting && candies.nbrOwned > 0) {
           candies.eat();
         }
@@ -91,95 +102,181 @@ var scriptFunction = function(exports, undefined) {
     }
   });
 
+  // auto heal when the character health gets too low
   var autoHeal = exports.autoHeal = extend({}, repeating, {
+    minHealth: 100,
+
     tick: function() {
       var character = quest && quest.things[quest.getCharacterIndex()];
-      if (character && character.hp < 100 && quest.potionUseCountdown < 1) {
-        potions.heal(100);
+      if (character && character.hp < this.minHealth && quest.potionUseCountdown < 1) {
+        if (potions.list.majorHealth.nbrOwned > 0) {
+          potions.heal(100);
+        } else if (potions.list.health.nbrOwned > 0) {
+          potions.heal(50);
+        }
       }
     }
   });
 
-  var activateCandyConverter = function() {
-    if (!candiesConverter.activated) {
-      document.getElementById('candies_converter_checkbox').checked = true;
-      candiesConverter.checkedValueChange();
-    }
-  };
+  var autoConvert = extend({}, repeating, {
+    delay: 250,
+    minHealth: 600,
+    paused: false,
 
-  var deactivateCandyConverter = function() {
-    if (candiesConverter.activated) {
-      document.getElementById('candies_converter_checkbox').checked = false;
-      candiesConverter.checkedValueChange();
-    }
-  };
-
-  var autoBrew = function() {
-    var potionsWanted = 100 - potions.list.majorHealth.nbrOwned;
-    if (potionsWanted < 80) {
-      if (quest.getCharacterMaxHp() >= 600) {
-        activateCandyConverter();
+    activate: function() {
+      if (!candiesConverter.activated) {
+        $('#candies_converter_checkbox').prop('checked', true);
+        candiesConverter.checkedValueChange();
       }
-      startNextBrew();
-      return;
-    }
+    },
 
-    deactivateCandyConverter();
-    var numPotionsCandies = Math.floor(candies.nbrOwned / 100);
-    var numPotionsLollipops = Math.floor(lollipops.nbrOwned / 100);
-    var numPotions = Math.min(numPotionsCandies, numPotionsLollipops, potionsWanted);
-    if (numPotions < 1) {
-      startNextBrew();
-      return;
-    }
-    var amountToAdd = numPotions * 100;
-
-    var candiesToAdd = document.getElementById('cauldron_candies_quantity');
-    var lollipopsToAdd = document.getElementById('cauldron_lollipops_quantity');
-
-    var candyInterval = null;
-    var stopAddingCandy = function() {
-      if (candyInterval) {
-        clearInterval(candyInterval);
-        candyInterval = null;
+    deactivate: function() {
+      if (candiesConverter.activated) {
+        $('#candies_converter_checkbox').prop('checked', false);
+        candiesConverter.checkedValueChange();
       }
-    };
-    var tryAddingCandy = function() {
-      if (candies.nbrOwned >= amountToAdd) {
-        candiesToAdd.value = amountToAdd;
-        lollipopsToAdd.value = 0;
-        cauldron.putInTheCauldron();
-        stopAddingCandy();
-      }
-    };
+    },
 
-    var startMixing = function() {
-      cauldron.setWeAreMixing(true);
+    stop: function() {
+      repeating.stop.call(this);
+      this.deactivate();
+    },
+
+    tick: function() {
+      if (this.paused || quest.getCharacterMaxHp() < this.minHealth) {
+        this.deactivate();
+      } else {
+        this.activate();
+      }
+    }
+  });
+
+  // auto brew major health potions
+  var autoBrew = {
+    minPotions: 20,
+    maxPotions: 100,
+
+    finish: function() {
+      var _this = this;
       setTimeout(function() {
-        candyInterval = setInterval(tryAddingCandy, 1000);
-        setTimeout(stopMixing, 20000);
+        _this.update();
       }, 1000);
-    };
-    var stopMixing = function() {
-      cauldron.stopActions();
-      cauldron.putIntoBottles();
-      stopAddingCandy();
-      startNextBrew();
-    };
+    },
 
-    candiesToAdd.value = 0;
-    lollipopsToAdd.value = amountToAdd;
-    cauldron.putInTheCauldron();
-    setTimeout(startMixing, 1000);
-  };
+    brew: function() {
+      var _this = this;
 
-  var startNextBrew = function() {
-    setTimeout(autoBrew, 1000);
+      var potionsWanted = this.maxPotions - potions.list.majorHealth.nbrOwned;
+      if (potionsWanted < (this.maxPotions - this.minPotions)) {
+        autoConvert.paused = false;
+        this.finish();
+        return;
+      }
+
+      autoConvert.paused = true;
+      var numPotionsCandies = Math.floor(candies.nbrOwned / 100);
+      var numPotionsLollipops = Math.floor(lollipops.nbrOwned / 100);
+      var numPotions = Math.min(numPotionsCandies, numPotionsLollipops, potionsWanted);
+      if (numPotions < 1) {
+        this.finish();
+        return;
+      }
+      var amountToAdd = numPotions * 100;
+
+      var candiesToAdd = $('#cauldron_candies_quantity');
+      var lollipopsToAdd = $('#cauldron_lollipops_quantity');
+
+      var candyInterval = null;
+      var stopAddingCandy = function() {
+        if (candyInterval) {
+          clearInterval(candyInterval);
+          candyInterval = null;
+        }
+      };
+      var tryAddingCandy = function() {
+        if (candies.nbrOwned >= amountToAdd) {
+          candiesToAdd.val(amountToAdd);
+          lollipopsToAdd.val(0);
+          cauldron.putInTheCauldron();
+          stopAddingCandy();
+        }
+      };
+
+      var startMixing = function() {
+        cauldron.setWeAreMixing(true);
+        setTimeout(function() {
+          candyInterval = setInterval(tryAddingCandy, 1000);
+          setTimeout(stopMixing, 20000);
+        }, 1000);
+      };
+      var stopMixing = function() {
+        cauldron.stopActions();
+        cauldron.putIntoBottles();
+        stopAddingCandy();
+        _this.finish();
+      };
+
+      candiesToAdd.val(0);
+      lollipopsToAdd.val(amountToAdd);
+      cauldron.putInTheCauldron();
+      setTimeout(startMixing, 1000);
+    },
+
+    noBrew: function() {
+      this.finish();
+    }
   };
+  autoBrew.update = autoBrew.noBrew;
+  autoBrew.finish();
+
+  // add a ui tab
+  (function() {
+    $('#tabs').append($(
+      '<li><button class="tab-5" tab="tab_auto" ' +
+      'style="display: inline;">Auto</button></li>'));
+    $('#tab_computer').after($('<div id="tab_auto" style="display: none;"></div>'));
+    $('#tab_auto').html(
+      '<input type="checkbox" id="auto_quest" checked> Auto quest<br>' +
+      '<input type="checkbox" id="auto_eat"> Eat candies before questing<br>' +
+      '<input type="checkbox" id="auto_heal"> Use health potions when health is less than ' +
+        '<input type="text" id="auto_heal_min" value="100" size="3"><br>' +
+      '<input type="checkbox" id="auto_brew"> Brew up to ' +
+        '<input type="text" id="auto_brew_max" value="100" size="3"> major health potions ' +
+        'when you have less than <input type="text" id="auto_brew_min" value="20" size="3"> of them' +
+        '<br>' +
+      '<input type="checkbox" id="auto_convert"> Convert candy when ' +
+        'max health is at least <input type="text" id="auto_convert_min" value="600">' +
+        '<br></div>');
+    $('#auto_heal_min').val(autoHeal.minHealth);
+    $('#auto_brew_min').val(autoBrew.minPotions);
+    $('#auto_brew_max').val(autoBrew.maxPotions);
+    $('#auto_convert_min').val(autoConvert.minHealth);
+
+    var updateCheckboxes = function() {
+      autoQuest.setStarted($('#auto_quest').is(':checked'));
+      autoQuest.eatBeforeQuesting = $('#auto_eat').is(':checked');
+      autoHeal.setStarted($('#auto_heal').is(':checked'));
+      autoBrew.update = $('#auto_brew').is(':checked') ? autoBrew.brew : autoBrew.noBrew;
+      autoConvert.setStarted($('#auto_convert').is(':checked'));
+    };
+    $('#tab_auto input[type=checkbox]').keypress(updateCheckboxes);
+    $('#tab_auto').click(updateCheckboxes);
+    $('#tab_auto').change(function() {
+      updateCheckboxes();
+      autoHeal.minHealth = parseInt($('#auto_heal_min').val(), 10) || 0;
+      autoBrew.minPotions = parseInt($('#auto_brew_min').val(), 10) || 0;
+      autoBrew.maxPotions = parseInt($('#auto_brew_max').val(), 10) || 0;
+      autoConvert.minHealth = Math.floor(parseFloat($('#auto_convert_min').val()));
+    });
+
+    tabs.length++;
+    tabs.list.push({button: $('.tab-5'), enabled: true});
+    tabs.list[5].button.bind('click', tabs.select.bind(tabs, 5));
+    tabs.disable(5);
+    tabs.enable(5);
+  })();
 
   autoQuest.start();
-  autoHeal.start();
-  startNextBrew();
 };
 
 var script = document.createElement('script');
