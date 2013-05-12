@@ -51,6 +51,47 @@ var scriptFunction = function(exports, undefined) {
       }
     };
   })();
+
+  // convenience wrapper for set interval
+  var repeating = exports.repeating = {
+    delay: 1000,
+    intervalId: null,
+
+    start: function() {
+      var _this = this;
+      this.stop();
+      this.intervalId = setInterval(function() {
+        if (_this.tick) {
+          _this.tick();
+        }
+      }, this.delay);
+    },
+
+    stop: function() {
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
+    },
+
+    tick: function() {}
+  };
+
+  var autoQuest = exports.autoQuest = extend({}, repeating, {
+    eatBeforeQuesting: true,
+
+    tick: function() {
+      var button = document.getElementById('quest_button');
+      if (!button.disabled) {
+        if (this.eatBeforeQuesting && candies.nbrOwned > 0) {
+          candies.eat();
+        }
+        quest.begin(true);
+      }
+    }
+  });
+
+  autoQuest.start();
 };
 
 var script = document.createElement('script');
